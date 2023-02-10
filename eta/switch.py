@@ -12,8 +12,10 @@ author hubtub2
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import xml.etree.ElementTree as ET
+from typing import Callable, Any
 
 import requests
 import voluptuous as vol
@@ -34,7 +36,7 @@ from homeassistant.const import FREQUENCY_HERTZ, PRESSURE_BAR, ELECTRIC_POTENTIA
     VOLUME_LITERS, ELECTRIC_POTENTIAL_MILLIVOLT, IRRADIATION_WATTS_PER_SQUARE_METER, ELECTRIC_CURRENT_MILLIAMPERE, \
     PRESSURE_PA, PERCENTAGE, AREA_SQUARE_METERS, CONF_PREFIX
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback, _T
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 import homeassistant.helpers.config_validation as cv
 
@@ -228,7 +230,7 @@ class EtaSwitch(SwitchEntity):
           - name - Friendly name, e.g "Außentemperatur" in local language
           - unique_id - globally unique id of sensor, e.g. "eta_11.123488_outside_temp", based on serial number
         """
-        _LOGGER.warn(f"ETA Integration - Init Switch: {name}")
+        _LOGGER.info(f"ETA Integration - Init Switch: {name}")
         self._attr_entity_registry_enabled_default = False
         self._is_on = False  # start with off state
         self._attr_unique_id = unique_id
@@ -253,16 +255,26 @@ class EtaSwitch(SwitchEntity):
     def unique_id(self):
         return self._attr_unique_id
 
+    @staticmethod
+    def post_request_wrapped(url, headers, value):
+        _LOGGER.info(f"ETA Post: {url}, headers:{headers}, value:{value}")
+        val = requests.post(
+            url,
+            headers=headers,
+            data={"value": value}
+        )
+        return val
+
     async def async_turn_on(self, **kwargs):
         """Turn the entity on."""
 
         headers = {'Content-type': 'application/x-www-form-urlencoded'}
 
-        val = await self.hass.async_add_executor_job(requests.post,
-                                                     get_base_url(self.config, VARINFO_PATH) + self.uri,
-                                                     headers=headers,
-                                                     data={"value": list(self.states.values())[1]}
-                                                     )
+        val = await self.hass.async_add_executor_job(self.post_request_wrapped,
+                                                     get_base_url(self.config, VAR_PATH) + self.uri,
+                                                     headers,
+                                                     list(self.states.values())[1])
+
         val = val.content.decode("utf8")
 
         if "success" in xmltodict.parse(val)["eta"]:
@@ -274,11 +286,10 @@ class EtaSwitch(SwitchEntity):
     async def async_turn_off(self, **kwargs):
         """Turn the entity off."""
         headers = {'Content-type': 'application/x-www-form-urlencoded'}
-        val = await self.hass.async_add_executor_job(requests.post,
-                                                     get_base_url(self.config, VARINFO_PATH) + self.uri,
-                                                     headers=headers,
-                                                     data={"value": list(self.states.values())[0]}
-                                                     )
+        val = await self.hass.async_add_executor_job(self.post_request_wrapped,
+                                                     get_base_url(self.config, VAR_PATH) + self.uri,
+                                                     headers,
+                                                     0)
         val = val.content.decode("utf8")
 
         if "success" in xmltodict.parse(val)["eta"]:
@@ -321,12 +332,12 @@ async def async_setup_platform(
 ) -> None:
     """Set up the sensor platform."""
 
-    _LOGGER.warn("ETA Integration - setup platform")
+    _LOGGER.info("ETA Integration - setup platform")
     s = Setup(config, hass)
     await s.init()
     entires = await s.get_switches()
     async_add_entities(entires)
-    _LOGGER.warn("ETA Integration - setup complete")
+    _LOGGER.info("ETA Integration - setup complete")
 
 
 class EtaSensor(SensorEntity):
@@ -349,7 +360,7 @@ class EtaSensor(SensorEntity):
           - unique_id - globally unique id of sensor, e.g. "eta_11.123488_outside_temp", based on serial number
 
         """
-        _LOGGER.warn(f"ETA Integration - Init Sensor: {name}")
+        _LOGGER.info(f"ETA Integration - Init Sensor: {name}")
 
         # disable sensor by default
         self._attr_entity_registry_enabled_default = False
