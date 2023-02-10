@@ -256,7 +256,8 @@ class EtaSwitch(SwitchEntity):
         return self._attr_unique_id
 
     @staticmethod
-    def post_request_wrapped(url, headers, value):
+    def post_request_wrapped(url, value):
+        headers = {'Content-type': 'application/x-www-form-urlencoded'}
         _LOGGER.info(f"ETA Post: {url}, headers:{headers}, value:{value}")
         val = requests.post(
             url,
@@ -267,12 +268,8 @@ class EtaSwitch(SwitchEntity):
 
     async def async_turn_on(self, **kwargs):
         """Turn the entity on."""
-
-        headers = {'Content-type': 'application/x-www-form-urlencoded'}
-
         val = await self.hass.async_add_executor_job(self.post_request_wrapped,
                                                      get_base_url(self.config, VAR_PATH) + self.uri,
-                                                     headers,
                                                      list(self.states.values())[1])
 
         val = val.content.decode("utf8")
@@ -285,11 +282,9 @@ class EtaSwitch(SwitchEntity):
 
     async def async_turn_off(self, **kwargs):
         """Turn the entity off."""
-        headers = {'Content-type': 'application/x-www-form-urlencoded'}
         val = await self.hass.async_add_executor_job(self.post_request_wrapped,
                                                      get_base_url(self.config, VAR_PATH) + self.uri,
-                                                     headers,
-                                                     0)
+                                                     list(self.states.values())[0])
         val = val.content.decode("utf8")
 
         if "success" in xmltodict.parse(val)["eta"]:
