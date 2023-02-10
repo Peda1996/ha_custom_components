@@ -63,7 +63,7 @@ def setup_platform(
 ) -> None:
     """Set up the sensor platform."""
 
-    _LOGGER.info("Netz OOE Integration - setup platform")
+    _LOGGER.warn("Netz OOE Integration - setup platform")
     add_entities([SmartMeter(
         config, hass
     )])
@@ -77,7 +77,7 @@ class SmartMeter(SensorEntity):
         Initialize sensor.
 
         """
-        _LOGGER.info(f"Netz OOE Integration - Init Sensor: {config.get(CONF_NAME)}")
+        _LOGGER.warn(f"Netz OOE Integration - Init Sensor: {config.get(CONF_NAME)}")
 
         self._attr_device_class = SensorDeviceClass.ENERGY
         self._attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR

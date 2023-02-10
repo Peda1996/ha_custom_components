@@ -167,12 +167,12 @@ class Setup:
 
                     # only allow where Yes and No, therefore 1802 and 1803 is no and yes for switch
                     if write_vals and len(write_vals) == 2 and 1802 in list(write_vals.values()):
-                        switch_name = new_name + " Schalter"
+                        switch_name = new_name + " >"
                         unique_id_switch = unique_id + "_switch"
                         self.switches[switch_name] = EtaSwitch(self.config, self.hass, switch_name, uri, write_vals,
                                                                unique_id_switch)
-                    self.sensors[new_name] = EtaSensor(self.config, self.hass, new_name, uri,
-                                                       unique_id, unit=unit)
+                    # self.sensors[new_name] = EtaSensor(self.config, self.hass, new_name, uri,
+                    #                                   unique_id, unit=unit)
                     # TODO check if writeable
                     # TODO check if it only has two states and therefore is a switch
 
@@ -324,7 +324,7 @@ async def async_setup_platform(
     _LOGGER.warn("ETA Integration - setup platform")
     s = Setup(config, hass)
     await s.init()
-    entires = await s.get_sensors()
+    entires = await s.get_switches()
     async_add_entities(entires)
     _LOGGER.warn("ETA Integration - setup complete")
 
@@ -340,14 +340,14 @@ class EtaSensor(SensorEntity):
                  factor=1.0):
         """
         Initialize sensor.
-        
+
         To show all values: http://192.168.178.75:8080/user/menu
-        
+
         There are:
           - entity_id - used to reference id, english, e.g. "eta_outside_temperature"
           - name - Friendly name, e.g "Außentemperatur" in local language
           - unique_id - globally unique id of sensor, e.g. "eta_11.123488_outside_temp", based on serial number
-        
+
         """
         _LOGGER.warn(f"ETA Integration - Init Sensor: {name}")
 
