@@ -228,7 +228,7 @@ class EtaSwitch(SwitchEntity):
           - name - Friendly name, e.g "Außentemperatur" in local language
           - unique_id - globally unique id of sensor, e.g. "eta_11.123488_outside_temp", based on serial number
         """
-        _LOGGER.warn(f"ETA Integration - Init Switch: {name}")
+        _LOGGER.info(f"ETA Integration - Init Switch: {name}")
         self._attr_entity_registry_enabled_default = False
         self._is_on = False  # start with off state
         self._attr_unique_id = unique_id
@@ -321,12 +321,12 @@ async def async_setup_platform(
 ) -> None:
     """Set up the sensor platform."""
 
-    _LOGGER.warn("ETA Integration - setup platform")
+    _LOGGER.info("ETA Integration - setup platform")
     s = Setup(config, hass)
     await s.init()
     entires = await s.get_sensors()
     async_add_entities(entires)
-    _LOGGER.warn("ETA Integration - setup complete")
+    _LOGGER.info("ETA Integration - setup complete")
 
 
 class EtaSensor(SensorEntity):
@@ -349,7 +349,7 @@ class EtaSensor(SensorEntity):
           - unique_id - globally unique id of sensor, e.g. "eta_11.123488_outside_temp", based on serial number
         
         """
-        _LOGGER.warn(f"ETA Integration - Init Sensor: {name}")
+        _LOGGER.info(f"ETA Integration - Init Sensor: {name}")
 
         # disable sensor by default
         self._attr_entity_registry_enabled_default = False
