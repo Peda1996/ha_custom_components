@@ -18,5 +18,6 @@ sensor:
 - If you want to see some relative values, I would advice to add a helper (can be found in settings -> integrations -> helper).
 
 ## Additional info:
-- Customer ID can be found here: https://eservice.netzooe.at/app/portal/profile
-- Contract number is "Vertrakskonto" and a Number.
+- Customer ID can be found here: https://eservice.netzooe.at/app/portal/dashboard
+- Contract number is "Vertrakskonto" and is represented by a Number.
+- Contract account is represented by "Zählpunkt"
