@@ -1,0 +1,38 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "ETA Heating",
+        "description": "Connect to the local ETA REST API.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "name": "Name",
+          "prefix": "Entity prefix"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect to the ETA REST API."
+    },
+    "abort": {
+      "already_configured": "This ETA device is already configured.",
+      "cannot_connect": "Cannot connect to the ETA REST API."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "ETA Heating options",
+        "data": {
+          "scan_interval": "Scan interval in seconds",
+          "cache_discovery": "Cache discovered entities",
+          "use_variable_set": "Use ETA variable set for polling",
+          "discovery_workers": "Discovery workers",
+          "full_switch_discovery": "Probe all text values for writable switches"
+        }
+      }
+    }
+  }
+}
+

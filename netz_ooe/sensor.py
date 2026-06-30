@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-import json
 import logging
 
 import requests
@@ -63,7 +62,7 @@ def setup_platform(
 ) -> None:
     """Set up the sensor platform."""
 
-    _LOGGER.warn("Netz OOE Integration - setup platform")
+    _LOGGER.warning("Netz OOE Integration - setup platform")
     add_entities([SmartMeter(
         config, hass
     )])
@@ -77,11 +76,11 @@ class SmartMeter(SensorEntity):
         Initialize sensor.
 
         """
-        _LOGGER.warn(f"Netz OOE Integration - Init Sensor: {config.get(CONF_NAME)}")
+        _LOGGER.warning("Netz OOE Integration - Init Sensor: %s", config.get(CONF_NAME))
 
         self._attr_device_class = SensorDeviceClass.ENERGY
         self._attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
-        self._attr_state_class = SensorStateClass.TOTAL
+        self._attr_state_class = SensorStateClass.TOTAL_INCREASING
 
         _id = config.get(CONF_NAME).lower().replace(' ', '_')
         self._attr_name = config.get(CONF_NAME)
@@ -113,11 +112,18 @@ class SmartMeter(SensorEntity):
             'j_password': self.password
         }
 
-        s = requests.Session()
-        s.post('https://eservice.netzooe.at/service/j_security_check', headers=headers, json=json_data)
+        with requests.Session() as session:
+            login = session.post(
+                'https://eservice.netzooe.at/service/j_security_check',
+                headers=headers,
+                json=json_data,
+                timeout=30,
+            )
+            login.raise_for_status()
 
-        r = s.get(self.update_url)
-        data = json.loads(r.content.decode("utf8"))
+            response = session.get(self.update_url, timeout=30)
+            response.raise_for_status()
+            data = response.json()
 
         self._attr_native_value = float(data["contracts"][0]
                                         ["pointOfDelivery"]["lastReadings"]

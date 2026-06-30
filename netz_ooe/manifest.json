@@ -1,10 +1,10 @@
 {
   "domain": "netz_ooe",
   "name": "Netz OÖ Lieferung - Smartmeter Auslese",
-  "documentation": "todo",
+  "documentation": "https://github.com/Peda1996/ha_custom_components/tree/master/netz_ooe",
   "dependencies": [],
   "codeowners": [],
   "requirements": ["requests"],
-  "iot_class": "local_polling",
-  "version": "0.0.1"
+  "iot_class": "cloud_polling",
+  "version": "0.0.2"
 }
