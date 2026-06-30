@@ -18,7 +18,7 @@ MENU_PATH = "/user/menu"
 VARINFO_PATH = "/user/varinfo"
 VARS_PATH = "/user/vars"
 
-CACHE_SCHEMA_VERSION = 1
+CACHE_SCHEMA_VERSION = 2
 
 DEFAULT_ENABLED_SLUGS = {
     "fbh_eingange_vorlauf",
