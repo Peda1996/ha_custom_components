@@ -18,7 +18,7 @@ MENU_PATH = "/user/menu"
 VARINFO_PATH = "/user/varinfo"
 VARS_PATH = "/user/vars"
 
-CACHE_SCHEMA_VERSION = 2
+CACHE_SCHEMA_VERSION = 3
 
 DEFAULT_ENABLED_SLUGS = {
     "fbh_eingange_vorlauf",
@@ -39,6 +39,14 @@ DEFAULT_ENABLED_SLUGS = {
     "solar_sonstiges_zustand",
 }
 
+DEFAULT_SWITCH_SLUGS = {
+    "fbh_sonstiges_ein_aus_taste",
+    "heizk_sonstiges_ein_aus_taste",
+    "kessel_sonstiges_ein_aus_taste",
+}
+
+DEFAULT_BINARY_SWITCH_VALUES = OrderedDict([("Aus", 1802), ("Ein", 1803)])
+
 CONTROL_NAME_WORDS = (
     "taste",
     "schalter",
@@ -46,9 +54,11 @@ CONTROL_NAME_WORDS = (
     "reset",
     "rücksetzen",
     "zurück",
-    "vor",
     "ein/aus",
     "start",
+    "starten",
+    "sofort",
+    "verriegeln",
     "abbrechen",
     "deaktivieren",
 )
@@ -139,6 +149,7 @@ class EtaEndpoint:
 
     uri: str
     name: str
+    legacy_keys: tuple[str, ...] = field(default_factory=tuple)
     unit: str = ""
     scale_factor: int = 1
     dec_places: int = 0
@@ -151,6 +162,13 @@ class EtaEndpoint:
     def unique_key(self) -> str:
         """Legacy-compatible unique key based on the generated entity name."""
         return self.name.replace(" ", "_")
+
+    @property
+    def unique_keys(self) -> tuple[str, ...]:
+        """Current and historical unique keys for this endpoint."""
+        keys = [self.unique_key]
+        keys.extend(key for key in self.legacy_keys if key and key not in keys)
+        return tuple(keys)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize endpoint for Home Assistant storage."""
@@ -166,9 +184,15 @@ class EtaEndpoint:
             for label, value in data.get("valid_values", {}).items()
         )
         name = data["name"]
+        legacy_keys = tuple(
+            str(key)
+            for key in data.get("legacy_keys", ())
+            if key and str(key) != name.replace(" ", "_")
+        )
         return cls(
             uri=normalize_uri(data["uri"]),
             name=name,
+            legacy_keys=legacy_keys,
             unit=data.get("unit", ""),
             scale_factor=int(data.get("scale_factor", 1) or 1),
             dec_places=int(data.get("dec_places", 0) or 0),
@@ -207,11 +231,16 @@ class EtaDiscovery:
         host: str,
         port: int,
         device_id: str,
+        *,
+        allow_version_mismatch: bool = False,
     ) -> "EtaDiscovery | None":
         """Load a cache entry if it matches the current ETA device."""
         if not cache:
             return None
-        if cache.get("version") != CACHE_SCHEMA_VERSION:
+        if (
+            not allow_version_mismatch
+            and cache.get("version") != CACHE_SCHEMA_VERSION
+        ):
             return None
         if cache.get("host") != host or int(cache.get("port", 0) or 0) != port:
             return None
@@ -230,6 +259,23 @@ class EtaDiscovery:
             endpoints=endpoints,
             created_at=cache.get("created_at") or datetime.now(UTC).isoformat(),
         )
+
+    def add_legacy_keys_from(self, previous: "EtaDiscovery | None") -> None:
+        """Keep old name-based unique IDs when ETA renames menu entries."""
+        if previous is None:
+            return
+
+        previous_by_uri: dict[str, list[EtaEndpoint]] = {}
+        for endpoint in previous.endpoints:
+            previous_by_uri.setdefault(endpoint.uri, []).append(endpoint)
+
+        for endpoint in self.endpoints:
+            keys = list(endpoint.legacy_keys)
+            for previous_endpoint in previous_by_uri.get(endpoint.uri, ()):
+                for key in previous_endpoint.unique_keys:
+                    if key != endpoint.unique_key and key not in keys:
+                        keys.append(key)
+            endpoint.legacy_keys = tuple(keys)
 
 
 class EtaApiClient:
@@ -253,9 +299,18 @@ class EtaApiClient:
         """Return the raw menu XML."""
         return await self._request("GET", MENU_PATH)
 
-    async def async_get_value(self, uri: str) -> EtaValue:
+    async def async_get_value(
+        self,
+        uri: str,
+        *,
+        attempts: int | None = None,
+    ) -> EtaValue:
         """Read one ETA variable."""
-        xml = await self._request("GET", f"{VAR_PATH}{normalize_uri(uri)}")
+        xml = await self._request(
+            "GET",
+            f"{VAR_PATH}{normalize_uri(uri)}",
+            attempts=attempts,
+        )
         return parse_value_xml(xml)
 
     async def async_get_values(
@@ -263,24 +318,38 @@ class EtaApiClient:
         uris: list[str],
         *,
         limit: int = 32,
+        attempts: int = 1,
     ) -> dict[str, EtaValue]:
-        """Read many ETA variables concurrently."""
+        """Read many ETA variables concurrently, skipping slow/broken ETA values."""
         semaphore = asyncio.Semaphore(limit)
         values: dict[str, EtaValue] = {}
 
         async def _read(uri: str) -> None:
             async with semaphore:
-                values[normalize_uri(uri)] = await self.async_get_value(uri)
+                try:
+                    values[normalize_uri(uri)] = await self.async_get_value(
+                        uri,
+                        attempts=attempts,
+                    )
+                except Exception:
+                    return
 
         await asyncio.gather(*(_read(uri) for uri in sorted(set(uris))))
         return values
 
-    async def async_get_varinfo(self, uri: str) -> EtaVariableInfo:
+    async def async_get_varinfo(
+        self,
+        uri: str,
+        *,
+        attempts: int | None = None,
+        timeout: int | None = None,
+    ) -> EtaVariableInfo:
         """Read ETA variable metadata."""
         xml = await self._request(
             "GET",
             f"{VARINFO_PATH}{normalize_uri(uri)}",
-            timeout=min(self.request_timeout, 8),
+            timeout=timeout if timeout is not None else min(self.request_timeout, 8),
+            attempts=attempts,
         )
         return parse_varinfo_xml(xml)
 
@@ -328,10 +397,13 @@ class EtaApiClient:
 
     async def async_get_device_id(self) -> str:
         """Build a stable device id from the ETA serial number variables."""
-        serial_1, serial_2 = await asyncio.gather(
-            self.async_get_value("/40/10021/0/0/12489"),
-            self.async_get_value("/40/10021/0/0/12490"),
-        )
+        try:
+            serial_1, serial_2 = await asyncio.gather(
+                self.async_get_value("/40/10021/0/0/12489"),
+                self.async_get_value("/40/10021/0/0/12490"),
+            )
+        except Exception:
+            return f"{self.host}:{self.port}"
         first = str(serial_1.native_value or serial_1.str_value or "").strip()
         second = str(serial_2.native_value or serial_2.str_value or "").strip()
         if first or second:
@@ -346,27 +418,37 @@ class EtaApiClient:
         data: dict[str, str] | None = None,
         expected_statuses: set[int] | None = None,
         timeout: int | None = None,
+        attempts: int | None = None,
     ) -> str:
         """Make one HTTP request and return response text."""
         expected = expected_statuses or {200}
         url = f"{self.base_url}{path}"
-        try:
-            async with self.session.request(
-                method,
-                url,
-                data=data,
-                timeout=timeout or self.request_timeout,
-            ) as response:
-                text = await response.text(encoding="utf-8")
-                if response.status not in expected:
-                    raise EtaApiError(
-                        f"ETA {method} {path} returned HTTP {response.status}: {text}"
-                    )
-                return text
-        except EtaApiError:
-            raise
-        except Exception as err:  # noqa: BLE001 - HA logs this as a setup/update error.
-            raise EtaApiError(f"ETA {method} {path} failed: {err}") from err
+        if attempts is None:
+            attempts = 3 if method in {"GET", "PUT", "DELETE"} else 1
+        last_error: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                async with self.session.request(
+                    method,
+                    url,
+                    data=data,
+                    timeout=timeout or self.request_timeout,
+                ) as response:
+                    text = await response.text(encoding="utf-8")
+                    if response.status not in expected:
+                        raise EtaApiError(
+                            f"ETA {method} {path} returned HTTP {response.status}: {text}"
+                        )
+                    return text
+            except EtaApiError:
+                raise
+            except Exception as err:  # noqa: BLE001 - HA logs this as a setup/update error.
+                last_error = err
+                if attempt + 1 >= attempts:
+                    break
+                await asyncio.sleep(0.4 * (attempt + 1))
+
+        raise EtaApiError(f"ETA {method} {path} failed: {last_error}") from last_error
 
 
 async def async_discover(
@@ -387,33 +469,74 @@ async def async_discover(
     endpoints: list[EtaEndpoint] = []
     switch_candidates: list[str] = []
     endpoint_by_uri: dict[str, list[EtaEndpoint]] = {}
+    items_by_uri: dict[str, list[EtaMenuItem]] = {}
     for item in menu_items:
+        items_by_uri.setdefault(item.uri, []).append(item)
         value = values.get(item.uri)
-        if value is None or not is_entity_value(value):
-            continue
-
         endpoint = EtaEndpoint(
             uri=item.uri,
             name=item.name,
-            unit=value.unit,
-            scale_factor=value.scale_factor,
-            dec_places=value.dec_places,
+            unit=value.unit if value is not None and is_entity_value(value) else "",
+            scale_factor=(
+                value.scale_factor if value is not None and is_entity_value(value) else 1
+            ),
+            dec_places=(
+                value.dec_places if value is not None and is_entity_value(value) else 0
+            ),
             enabled_default=is_default_enabled_name(item.name),
         )
         endpoints.append(endpoint)
         endpoint_by_uri.setdefault(item.uri, []).append(endpoint)
 
-        if value.unit == "" and value.str_value:
-            if full_switch_discovery or is_likely_control(item.name, value.str_value):
-                switch_candidates.append(item.uri)
+        if full_switch_discovery or is_likely_control(
+            item.name,
+            value.str_value if value is not None else "",
+        ):
+            switch_candidates.append(item.uri)
 
     varinfos = await async_probe_varinfos(
         client,
         switch_candidates,
-        workers=max(1, workers),
+        workers=max(1, min(workers, 12)),
+        attempts=1,
+        timeout=2,
     )
+    required_switch_candidates = [
+        uri
+        for uri in switch_candidates
+        if any(is_default_switch_name(item.name) for item in items_by_uri.get(uri, ()))
+    ]
+    missing_required = [
+        uri for uri in required_switch_candidates if normalize_uri(uri) not in varinfos
+    ]
+    if missing_required:
+        varinfos.update(
+            await async_probe_varinfos(
+                client,
+                missing_required,
+                workers=max(1, min(workers, 4)),
+                attempts=3,
+                timeout=8,
+            )
+        )
     for uri, info in varinfos.items():
         uri_endpoints = endpoint_by_uri.get(uri)
+        if uri_endpoints is None and info.is_writable and len(info.valid_values) == 2:
+            uri_endpoints = []
+            for item in items_by_uri.get(uri, ()):
+                endpoint = EtaEndpoint(
+                    uri=item.uri,
+                    name=item.name,
+                    unit=info.unit,
+                    scale_factor=info.scale_factor,
+                    dec_places=info.dec_places,
+                    enabled_default=True,
+                )
+                endpoints.append(endpoint)
+                uri_endpoints.append(endpoint)
+            if uri_endpoints:
+                endpoint_by_uri[uri] = uri_endpoints
+
         if uri_endpoints is None:
             continue
         for endpoint in uri_endpoints:
@@ -426,6 +549,12 @@ async def async_discover(
                 endpoint.valid_values = info.valid_values
                 endpoint.enabled_default = True
 
+    for endpoint in endpoints:
+        if not endpoint.valid_values and is_default_binary_switch_name(endpoint.name):
+            endpoint.kind = "switch"
+            endpoint.valid_values = DEFAULT_BINARY_SWITCH_VALUES.copy()
+            endpoint.enabled_default = True
+
     return EtaDiscovery(
         device_id=device_id,
         endpoints=endpoints,
@@ -437,6 +566,8 @@ async def async_probe_varinfos(
     uris: list[str],
     *,
     workers: int = 16,
+    attempts: int = 1,
+    timeout: int | None = None,
 ) -> dict[str, EtaVariableInfo]:
     """Probe varinfo endpoints without failing discovery when ETA times out."""
     semaphore = asyncio.Semaphore(workers)
@@ -445,7 +576,11 @@ async def async_probe_varinfos(
     async def _read(uri: str) -> None:
         async with semaphore:
             try:
-                results[normalize_uri(uri)] = await client.async_get_varinfo(uri)
+                results[normalize_uri(uri)] = await client.async_get_varinfo(
+                    uri,
+                    attempts=attempts,
+                    timeout=timeout,
+                )
             except Exception:
                 return
 
@@ -608,14 +743,28 @@ def is_entity_value(value: EtaValue) -> bool:
 def is_likely_control(name: str, str_value: str) -> bool:
     """Return true when varinfo probing is likely to find a writable control."""
     lower_name = name.lower()
-    if str_value.strip().lower() in BINARY_VALUE_WORDS:
-        return True
     return any(word in lower_name for word in CONTROL_NAME_WORDS)
 
 
 def is_default_enabled_name(name: str) -> bool:
     """Return true for the legacy dashboard's high-value ETA sensors."""
     return legacy_slug(name) in DEFAULT_ENABLED_SLUGS
+
+
+def is_default_switch_name(name: str) -> bool:
+    """Return true for high-value writable ETA controls."""
+    return legacy_slug(name) in DEFAULT_SWITCH_SLUGS
+
+
+def is_default_binary_switch_name(name: str) -> bool:
+    """Return true when ETA's documented on/off raw values can be used."""
+    name_key = name.lower()
+    return (
+        legacy_slug(name) in DEFAULT_SWITCH_SLUGS
+        or "ein/aus taste" in name_key
+        or "on/off button" in name_key
+        or "i/o key" in name_key
+    )
 
 
 def legacy_slug(value: str) -> str:

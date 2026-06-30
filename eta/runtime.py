@@ -109,6 +109,9 @@ class EtaRuntime:
     async def async_setup(self) -> None:
         """Load or create discovery metadata and initialize the coordinator."""
         self.device_id = await self.client.async_get_device_id()
+        previous_discovery = await self._async_load_discovery(
+            allow_version_mismatch=True
+        )
         self.discovery = await self._async_load_discovery()
 
         if self.discovery is None:
@@ -124,6 +127,7 @@ class EtaRuntime:
                     )
                 ),
             )
+            self.discovery.add_legacy_keys_from(previous_discovery)
             await self._async_save_discovery()
         else:
             _LOGGER.info(
@@ -146,7 +150,11 @@ class EtaRuntime:
         )
         await self.coordinator.async_config_entry_first_refresh()
 
-    async def _async_load_discovery(self) -> EtaDiscovery | None:
+    async def _async_load_discovery(
+        self,
+        *,
+        allow_version_mismatch: bool = False,
+    ) -> EtaDiscovery | None:
         if not self.data.get(CONF_CACHE_DISCOVERY, DEFAULT_CACHE_DISCOVERY):
             return None
 
@@ -156,7 +164,13 @@ class EtaRuntime:
             self.storage_key,
         )
         cache = await store.async_load()
-        return EtaDiscovery.from_cache(cache, self.host, self.port, self.device_id or "")
+        return EtaDiscovery.from_cache(
+            cache,
+            self.host,
+            self.port,
+            self.device_id or "",
+            allow_version_mismatch=allow_version_mismatch,
+        )
 
     async def _async_save_discovery(self) -> None:
         if (

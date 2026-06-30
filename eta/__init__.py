@@ -131,7 +131,7 @@ def _migrate_entity_registry(
     for endpoint in runtime.discovery.endpoints:
         sensor_uid = f"{runtime.prefix}_{runtime.device_id}.{endpoint.unique_key}"
         sensor_entity_id = f"sensor.{slugify(f'{runtime.prefix}_{endpoint.name}')}"
-        possible_sensor_uids = _possible_unique_ids(runtime, endpoint.unique_key)
+        possible_sensor_uids = _possible_unique_ids(runtime, endpoint)
         _adopt_legacy_registry_entry(
             registry,
             domain="sensor",
@@ -170,12 +170,13 @@ def _migrate_entity_registry(
             )
 
 
-def _possible_unique_ids(runtime, endpoint_key: str) -> set[str]:
+def _possible_unique_ids(runtime, endpoint) -> set[str]:
     """Return current and historical ETA unique IDs for one endpoint."""
     prefixes = {runtime.prefix, "eta", "eta_heating"}
     return {
         f"{prefix}_{runtime.device_id}.{endpoint_key}"
         for prefix in prefixes
+        for endpoint_key in endpoint.unique_keys
         if prefix
     }
 

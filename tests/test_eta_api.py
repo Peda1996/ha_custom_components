@@ -19,6 +19,8 @@ sys.modules[_API_SPEC.name] = eta_api
 _API_SPEC.loader.exec_module(eta_api)
 
 EtaApiClient = eta_api.EtaApiClient
+EtaDiscovery = eta_api.EtaDiscovery
+EtaEndpoint = eta_api.EtaEndpoint
 EtaValue = eta_api.EtaValue
 async_discover = eta_api.async_discover
 parse_menu_xml = eta_api.parse_menu_xml
@@ -121,6 +123,59 @@ class EtaApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(switch_endpoint.name, "Kessel Sonstiges Ein/Aus Taste")
         self.assertEqual(switch_endpoint.valid_values, OrderedDict([("Aus", 1802), ("Ein", 1803)]))
 
+    async def test_discovery_creates_switch_from_varinfo_when_value_read_fails(self) -> None:
+        client = _MissingSwitchValueClient()
+        discovery = await async_discover(client, "11.12345", workers=4)
+
+        switch_endpoint = next(
+            endpoint
+            for endpoint in discovery.endpoints
+            if endpoint.uri == "/40/10021/0/0/12080"
+        )
+
+        self.assertEqual(switch_endpoint.name, "Kessel Sonstiges Ein/Aus Taste")
+        self.assertEqual(switch_endpoint.valid_values, OrderedDict([("Aus", 1802), ("Ein", 1803)]))
+        self.assertTrue(switch_endpoint.enabled_default)
+
+    def test_discovery_adds_legacy_keys_from_previous_cache_by_uri(self) -> None:
+        current = EtaDiscovery(
+            device_id="11.12345",
+            endpoints=[
+                EtaEndpoint(
+                    uri="/120/10102/0/0/12080",
+                    name="Heizk Sonstiges Ein/Aus Taste",
+                )
+            ],
+        )
+        previous = EtaDiscovery(
+            device_id="11.12345",
+            endpoints=[
+                EtaEndpoint(
+                    uri="/120/10102/0/0/12080",
+                    name="Heizk Sonstiges Ein/Aus Taste_2",
+                )
+            ],
+        )
+
+        current.add_legacy_keys_from(previous)
+
+        self.assertEqual(
+            current.endpoints[0].legacy_keys,
+            ("Heizk_Sonstiges_Ein/Aus_Taste_2",),
+        )
+
+    async def test_get_values_skips_one_broken_endpoint(self) -> None:
+        session = _OneBrokenGetSession()
+        client = EtaApiClient("192.0.2.10", 8080, session)
+
+        values = await client.async_get_values(
+            ["/40/10021/0/0/12000", "/40/10021/0/0/99999"],
+            limit=2,
+        )
+
+        self.assertIn("/40/10021/0/0/12000", values)
+        self.assertNotIn("/40/10021/0/0/99999", values)
+
     async def test_write_posts_to_user_var_endpoint(self) -> None:
         session = _FakeSession()
         client = EtaApiClient("192.0.2.10", 8080, session)
@@ -161,7 +216,7 @@ class _FakeClient:
             ),
         }
 
-    async def async_get_varinfo(self, uri: str):
+    async def async_get_varinfo(self, uri: str, *, attempts=None, timeout=None):
         return parse_varinfo_xml(
             """<?xml version="1.0" encoding="utf-8"?>
             <eta xmlns="http://www.eta.co.at/rest/v1">
@@ -177,6 +232,13 @@ class _FakeClient:
              </varInfo>
             </eta>"""
         )
+
+
+class _MissingSwitchValueClient(_FakeClient):
+    async def async_get_values(self, uris: list[str], *, limit: int = 32):
+        values = await super().async_get_values(uris, limit=limit)
+        values.pop("/40/10021/0/0/12080", None)
+        return values
 
 
 class _FakeSession:
@@ -208,6 +270,30 @@ class _FakeResponse:
         return """<?xml version="1.0" encoding="utf-8"?>
         <eta xmlns="http://www.eta.co.at/rest/v1">
          <success uri="/user/var/40/10021/0/0/12112"/>
+        </eta>"""
+
+
+class _OneBrokenGetSession:
+    def request(self, method, url, data=None, timeout=None):
+        if url.endswith("/40/10021/0/0/99999"):
+            raise RuntimeError("broken endpoint")
+        return _ValueResponse()
+
+
+class _ValueResponse:
+    status = 200
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def text(self, encoding="utf-8"):
+        return """<?xml version="1.0" encoding="utf-8"?>
+        <eta xmlns="http://www.eta.co.at/rest/v1">
+         <value unit="" uri="/user/var/40/10021/0/0/12000"
+                strValue="Ausgeschaltet" scaleFactor="1">2000</value>
         </eta>"""
 
 
