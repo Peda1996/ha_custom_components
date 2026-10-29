@@ -189,6 +189,23 @@ class EtaApiTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(session.calls[0]["data"], {"value": "1803"})
 
+    async def test_existing_variable_set_is_reused(self) -> None:
+        session = _ExistingVarsetSession()
+        client = EtaApiClient("192.0.2.10", 8080, session)
+
+        await client.async_ensure_variable_set(
+            "haeta1",
+            ["/40/10021/0/0/12000", "/40/10021/0/0/12080"],
+        )
+
+        self.assertEqual(
+            [(method, url) for method, url in session.calls if method == "PUT"],
+            [
+                ("PUT", "http://192.0.2.10:8080/user/vars/haeta1"),
+                ("PUT", "http://192.0.2.10:8080/user/vars/haeta1/40/10021/0/0/12080"),
+            ],
+        )
+
 
 class _FakeClient:
     async def async_get_menu(self) -> str:
@@ -295,6 +312,55 @@ class _ValueResponse:
          <value unit="" uri="/user/var/40/10021/0/0/12000"
                 strValue="Ausgeschaltet" scaleFactor="1">2000</value>
         </eta>"""
+
+
+class _ExistingVarsetSession:
+    """ETA controller that already has the variable set with one variable."""
+
+    def __init__(self) -> None:
+        self.calls = []
+
+    def request(self, method, url, data=None, timeout=None):
+        self.calls.append((method, url))
+        if method == "PUT" and url.endswith("/user/vars/haeta1"):
+            return _XmlResponse(
+                400,
+                """<?xml version="1.0" encoding="utf-8"?>
+                <eta xmlns="http://www.eta.co.at/rest/v1">
+                 <error uri="/user/vars/haeta1">Variable set already exists</error>
+                </eta>""",
+            )
+        if method == "GET":
+            return _XmlResponse(
+                200,
+                """<?xml version="1.0" encoding="utf-8"?>
+                <eta xmlns="http://www.eta.co.at/rest/v1">
+                 <vars uri="/user/vars/haeta1">
+                  <variable unit="" uri="40/10021/0/0/12000"
+                            strValue="Ausgeschaltet" scaleFactor="1">2000</variable>
+                 </vars>
+                </eta>""",
+            )
+        return _XmlResponse(
+            200,
+            """<?xml version="1.0" encoding="utf-8"?>
+            <eta xmlns="http://www.eta.co.at/rest/v1"><success/></eta>""",
+        )
+
+
+class _XmlResponse:
+    def __init__(self, status: int, body: str) -> None:
+        self.status = status
+        self._body = body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def text(self, encoding="utf-8"):
+        return self._body
 
 
 if __name__ == "__main__":

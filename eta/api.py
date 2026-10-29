@@ -372,11 +372,19 @@ class EtaApiClient:
     ) -> None:
         """Create and populate a volatile ETA variable set."""
         safe_name = normalize_varset_name(name)
-        await self._request(
-            "PUT",
-            f"{VARS_PATH}/{safe_name}",
-            expected_statuses={200, 201, 204, 409},
-        )
+        wanted = {normalize_uri(uri) for uri in uris}
+        try:
+            await self._request(
+                "PUT",
+                f"{VARS_PATH}/{safe_name}",
+                expected_statuses={200, 201, 204, 409},
+            )
+        except EtaApiError as err:
+            # ETA answers HTTP 400 "Variable set already exists" instead of 409.
+            # The set survives HA restarts, so reuse it and only add what is missing.
+            if "already exists" not in str(err):
+                raise
+            wanted -= set(await self.async_get_variable_set(name))
 
         semaphore = asyncio.Semaphore(limit)
 
@@ -384,11 +392,11 @@ class EtaApiClient:
             async with semaphore:
                 await self._request(
                     "PUT",
-                    f"{VARS_PATH}/{safe_name}{normalize_uri(uri)}",
+                    f"{VARS_PATH}/{safe_name}{uri}",
                     expected_statuses={200, 201, 204, 409},
                 )
 
-        await asyncio.gather(*(_add(uri) for uri in sorted(set(uris))))
+        await asyncio.gather(*(_add(uri) for uri in sorted(wanted)))
 
     async def async_get_variable_set(self, name: str) -> dict[str, EtaValue]:
         """Read all values from an ETA variable set."""
